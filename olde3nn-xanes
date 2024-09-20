@@ -1,0 +1,624 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "8289d2e5",
+   "metadata": {},
+   "source": [
+    "[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ninarina12/XANESNN/blob/main/e3nn-xanes.ipynb)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "885479b6",
+   "metadata": {},
+   "source": [
+    "# Predicting K-edge XANES with E(3)NN"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "eed8ff28",
+   "metadata": {},
+   "source": [
+    "## Colab Setup"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5da1a387",
+   "metadata": {},
+   "source": [
+    "- Go to Runtime > Change runtime type, and select GPU.\n",
+    "- Clone the GitHub repository to access the tutorial files:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "408d4aa0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!git clone https://github.com/ninarina12/XANESNN.git\n",
+    "%cd XANESNN"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e1a0c0ce",
+   "metadata": {},
+   "source": [
+    "- Install the relevant packages:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "69533a55",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!pip install ase pymatgen cmcrameri e3nn\n",
+    "!pip install torch-scatter torch-cluster torch-sparse torch-spline-conv -f https://pytorch-geometric.com/whl/torch-$(python -c \"import torch; print(torch.__version__)\").html\n",
+    "!pip install torch-geometric",
+    "!pip install torch-geometric"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "edcaea8b",
+   "metadata": {},
+   "source": [
+    "## Package imports"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "872b7c02",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%matplotlib inline\n",
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib as mpl\n",
+    "import matplotlib.pyplot as plt\n",
+    "import time\n",
+    "import os\n",
+    "\n",
+    "import torch\n",
+    "import torch.nn as nn\n",
+    "import torch.nn.functional as F\n",
+    "import torch_geometric as tg\n",
+    "import torch_scatter\n",
+    "\n",
+    "from ase import Atom\n",
+    "from ase.data import atomic_masses\n",
+    "\n",
+    "from tqdm import tqdm\n",
+    "from utils.data import XANES, Process, bar_format\n",
+    "from utils.e3nn import Network\n",
+    "\n",
+    "default_dtype = torch.float64\n",
+    "torch.set_default_dtype(default_dtype)\n",
+    "device = \"cuda:0\" if torch.cuda.is_available() else 'cpu'"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3ebfdef7",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "if not os.path.exists('images/'):\n",
+    "    os.makedirs('images/')\n",
+    "    \n",
+    "if not os.path.exists('models/'):\n",
+    "    os.makedirs('models/')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b78f658f",
+   "metadata": {},
+   "source": [
+    "## Load and process data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b87d8be4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Load data\n",
+    "data_file = 'data/Ni_K_XANES_averaged_simplified.json'\n",
+    "xanes = XANES()\n",
+    "xanes.load_data(data_file)\n",
+    "xanes.data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "17017f4c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Interpolate XANES data to uniform energy bins"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a630bf88",
+   "metadata": {},
+   "source": [
+    "## Inspect data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d27092f9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Enforce a minimum number of examples of each specie\n",
+    "species_min = 1\n",
+    "\n",
+    "xanes.get_species_counts()\n",
+    "fig = xanes.plot_species_counts(species_min)\n",
+    "#xanes.set_species_counts(species_min)\n",
+    "#xanes.get_species_counts()\n",
+    "#xanes.savefig('images/species_counts.svg', bbox_inches='tight')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9ad32233",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Lattice parameter statistics\n",
+    "xanes.get_lattice_parameters()\n",
+    "fig = xanes.plot_lattice_parameters(n_bins=50)\n",
+    "#fig.savefig('images/lattice_parameters.svg', bbox_inches='tight')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d8fc14eb",
+   "metadata": {},
+   "source": [
+    "## Format input features"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "5c72f7f5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get species\n",
+    "species = sorted(list(set(xanes.data['species'].sum())))\n",
+    "n_species = list(np.unique(xanes.data['species'].sum(), return_counts=True)[1])\n",
+    "Z_max = max([Atom(k).number for k in species])\n",
+    "print(Z_max)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7bc0c77f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# One-hot encoding atom type and mass\n",
+    "type_encoding = {}\n",
+    "mass_specie = []\n",
+    "\n",
+    "for Z in tqdm(range(1, Z_max + 1), bar_format=bar_format):\n",
+    "    specie = Atom(Z)\n",
+    "    type_encoding[specie.symbol] = Z - 1\n",
+    "    mass_specie.append(atomic_masses[Z])\n",
+    "\n",
+    "type_onehot = torch.eye(len(type_encoding))\n",
+    "mass_onehot = torch.diag(torch.tensor(mass_specie))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "541c7f7f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Process data into input descriptors\n",
+    "process = Process(species, Z_max, type_encoding, type_onehot, mass_onehot, default_dtype)\n",
+    "\n",
+    "r_max = 5.     # cutoff radius\n",
+    "tqdm.pandas(desc='Building data', bar_format=bar_format)\n",
+    "xanes.data['input'] = xanes.data.progress_apply(lambda x: process.build_data(x, r_max), axis=1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "269237e0",
+   "metadata": {},
+   "source": [
+    "## Format training, validation, and test sets"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "292d0758",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Train/valid/test split\n",
+    "test_size = 0.2\n",
+    "fig = process.train_valid_test_split(xanes.data, valid_size=test_size, test_size=test_size, plot=True)\n",
+    "#fig.savefig('images/train_valid_test_split.svg', bbox_inches='tight')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "697fb2be",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Calculate average number of neighbors\n",
+    "process.get_neighbors(xanes.data)\n",
+    "fig = process.plot_neighbors(n_bins=50)\n",
+    "print('Average number of neighbors (train/valid/test):', process.n_train.mean(), '/',\n",
+    "                                                         process.n_valid.mean(), '/',\n",
+    "                                                         process.n_test.mean())\n",
+    "#fig.savefig('images/num_neighbors.svg', bbox_inches='tight')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3f439779",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Format dataloaders\n",
+    "batch_size = 16\n",
+    "dataloader_train = tg.loader.DataLoader(xanes.data.iloc[process.idx_train]['input'].tolist(), batch_size=batch_size,\n",
+    "                                        shuffle=True)\n",
+    "dataloader_valid = tg.loader.DataLoader(xanes.data.iloc[process.idx_valid]['input'].tolist(), batch_size=batch_size)\n",
+    "dataloader_test = tg.loader.DataLoader(xanes.data.iloc[process.idx_test]['input'].tolist(), batch_size=batch_size)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a6656847",
+   "metadata": {},
+   "source": [
+    "## Build neural network model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e16ff6c3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "class E3NN(Network):\n",
+    "    def __init__(self, in_dim, out_dim, emb_dim, num_layers, mul, lmax, max_radius, num_basis, radial_layers,\n",
+    "                 radial_neurons, num_neighbors):\n",
+    "        kwargs = {'reduce_output': False,\n",
+    "                  'irreps_in': str(emb_dim)+\"x0e\",\n",
+    "                  'irreps_out': str(out_dim)+\"x0e\",\n",
+    "                  'irreps_node_attr': str(emb_dim)+\"x0e\",\n",
+    "                  'layers': num_layers,\n",
+    "                  'mul': mul,\n",
+    "                  'lmax': lmax,\n",
+    "                  'max_radius': max_radius,\n",
+    "                  'number_of_basis': num_basis,\n",
+    "                  'radial_layers': radial_layers,\n",
+    "                  'radial_neurons': radial_neurons,\n",
+    "                  'num_neighbors': num_neighbors\n",
+    "                 }\n",
+    "        super().__init__(**kwargs)\n",
+    "        \n",
+    "        # definitions\n",
+    "        self.cmap = plt.get_cmap('plasma')\n",
+    "        self.in_dim = in_dim\n",
+    "        self.out_dim = out_dim\n",
+    "        self.emb_dim = emb_dim\n",
+    "        self.num_layers = num_layers\n",
+    "        self.mul = mul\n",
+    "        self.lmax = lmax\n",
+    "        self.max_radius = max_radius\n",
+    "        self.num_basis = num_basis\n",
+    "        self.radial_layers = radial_layers\n",
+    "        self.radial_neurons = radial_neurons\n",
+    "        self.num_neighbors = num_neighbors\n",
+    "        \n",
+    "        self.model_name = 'e3nn-xanes_' + '_'.join(i + str(int(j)) for (i,j) in zip(\n",
+    "            ['emb', 'layers', 'mul', 'lmax', 'rmax', 'nbasis', 'rlayers', 'rneurons'],\n",
+    "            [emb_dim, num_layers, mul, lmax, max_radius, num_basis, radial_layers, radial_neurons]))\n",
+    "        \n",
+    "        # embedding\n",
+    "        self.emb_x = nn.Sequential(\n",
+    "            nn.Linear(in_dim, emb_dim),\n",
+    "            nn.ReLU()\n",
+    "        )\n",
+    "        \n",
+    "        self.emb_z = nn.Sequential(\n",
+    "            nn.Linear(in_dim, emb_dim),\n",
+    "            nn.Tanh()\n",
+    "        )\n",
+    "        \n",
+    "    \n",
+    "    def forward(self, data):\n",
+    "        data['x'] = self.emb_x(data['x_in'])\n",
+    "        data['z'] = self.emb_z(data['z_in'])\n",
+    "        x = super().forward(data)[0]\n",
+    "        \n",
+    "        # aggregate\n",
+    "        if 'batch' in data:\n",
+    "            batch = data['batch']\n",
+    "        else:\n",
+    "            batch = data['pos'].new_zeros(data['pos'].shape[0], dtype=torch.long)\n",
+    "\n",
+    "        y = torch_scatter.scatter_mean(x, batch, dim=0)\n",
+    "        return y\n",
+    "    \n",
+    "    \n",
+    "    def count_parameters(self): \n",
+    "        return sum(p.numel() for p in self.parameters() if p.requires_grad)\n",
+    "    \n",
+    "\n",
+    "    def loss(self, y_pred, y_true):\n",
+    "        return nn.MSELoss()(y_pred, y_true)\n",
+    "    \n",
+    "    \n",
+    "    def checkpoint(self, dataloader, device):\n",
+    "        self.eval()\n",
+    "        \n",
+    "        loss_cum = 0.\n",
+    "        with torch.no_grad():\n",
+    "            for j, d in enumerate(dataloader):\n",
+    "                d.to(device)\n",
+    "                y_pred = self.forward(d)\n",
+    "\n",
+    "                loss = self.loss(y_pred, d.y).cpu()\n",
+    "                loss_cum += loss.detach().item()\n",
+    "                \n",
+    "        return loss_cum/len(dataloader)\n",
+    "\n",
+    "    \n",
+    "    def fit(self, opt, dataloader_train, dataloader_valid, history, s0, max_iter=10, device=\"cpu\", scheduler=None):\n",
+    "        chkpt = 1\n",
+    "\n",
+    "        for step in range(max_iter):\n",
+    "            self.train()\n",
+    "\n",
+    "            loss_cum = 0.\n",
+    "            start_time = time.time()\n",
+    "\n",
+    "            for j, d in enumerate(dataloader_train):\n",
+    "                d.to(device)\n",
+    "                y_pred = self.forward(d)\n",
+    "\n",
+    "                loss = self.loss(y_pred, d.y).cpu()\n",
+    "                loss_cum += loss.detach().item()\n",
+    "                \n",
+    "                print(f\"Iteration {step+1:5d}    batch {j+1:5d} / {len(dataloader_train):5d}   \" +\n",
+    "                      f\"batch loss = {loss.data:.4e}\", end=\"\\r\", flush=True)\n",
+    "                \n",
+    "                opt.zero_grad()\n",
+    "                loss.backward()\n",
+    "                opt.step()\n",
+    "            \n",
+    "            if scheduler is not None:\n",
+    "                scheduler.step()\n",
+    "            \n",
+    "            end_time = time.time()\n",
+    "            wall = end_time - start_time\n",
+    "\n",
+    "            if (step+1)%chkpt == 0:\n",
+    "                print(f\"Iteration {step+1:5d}    batch {j+1:5d} / {len(dataloader_train):5d}   \" +\n",
+    "                      f\"epoch loss = {loss_cum/len(dataloader_train):.4e}\")\n",
+    "\n",
+    "                loss_valid = self.checkpoint(dataloader_valid, device)\n",
+    "                loss_train = self.checkpoint(dataloader_train, device)\n",
+    "\n",
+    "                history.append({\n",
+    "                    'step': step + s0,\n",
+    "                    'wall': wall,\n",
+    "                    'batch': {\n",
+    "                        'loss': loss.item(),\n",
+    "                    },\n",
+    "                    'valid': {\n",
+    "                        'loss': loss_valid,\n",
+    "                    },\n",
+    "                     'train': {\n",
+    "                         'loss': loss_train,\n",
+    "                     },\n",
+    "                })\n",
+    "\n",
+    "                yield {\n",
+    "                    'history': history,\n",
+    "                    'state': self.state_dict(),\n",
+    "                    'optimizer': opt.state_dict(),\n",
+    "                    'scheduler': scheduler.state_dict() if scheduler else None\n",
+    "                }"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "eb8d0e67",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "args_enn = {'in_dim': Z_max,\n",
+    "            'out_dim': xanes.data.iloc[0]['input'].y.shape[-1],\n",
+    "            'emb_dim': 64,\n",
+    "            'num_layers': 2,\n",
+    "            'mul': 32,\n",
+    "            'lmax': 2,\n",
+    "            'max_radius': r_max,\n",
+    "            'num_basis': 10,\n",
+    "            'radial_layers': 1,\n",
+    "            'radial_neurons': 100,\n",
+    "            'num_neighbors': process.n_train.mean(),\n",
+    "           }\n",
+    "\n",
+    "enn = E3NN(**args_enn).to(device)\n",
+    "opt = torch.optim.Adam(enn.parameters(), lr=3e-3)\n",
+    "scheduler = None #torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.99)\n",
+    "\n",
+    "model_num = 0\n",
+    "model_path = 'models/' + enn.model_name + '_' + str(model_num) + '.torch'\n",
+    "\n",
+    "print(model_path)\n",
+    "#print(enn)\n",
+    "print('Number of parameters:', enn.count_parameters())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8a07b39f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig = enn.visualize()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c835f385",
+   "metadata": {},
+   "source": [
+    "## Train model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0582cfbb",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "resume = False\n",
+    "    \n",
+    "if resume:\n",
+    "    saved = torch.load(model_path, map_location=device)\n",
+    "    enn.load_state_dict(saved['state'])\n",
+    "    opt.load_state_dict(saved['optimizer'])\n",
+    "    try:\n",
+    "        scheduler.load_state_dict(saved['scheduler'])\n",
+    "    except:\n",
+    "        scheduler = None\n",
+    "    history = saved['history']\n",
+    "    s0 = history[-1]['step'] + 1\n",
+    "\n",
+    "else:\n",
+    "    history = []\n",
+    "    s0 = 0"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ad91d083",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Fit E3NN\n",
+    "for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=20, device=device,\n",
+    "                       scheduler=scheduler):\n",
+    "    with open(model_path, 'wb') as f:\n",
+    "        torch.save(results, f)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3eba0c7e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "if not os.path.exists('images/' + enn.model_name + '_' + str(model_num)):\n",
+    "    os.makedirs('images/' + enn.model_name + '_' + str(model_num))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f22547d2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "saved = torch.load(model_path, map_location=device)\n",
+    "history = saved['history']\n",
+    "\n",
+    "steps = [d['step'] + 1 for d in history]\n",
+    "loss_train = [d['train']['loss'] for d in history]\n",
+    "loss_valid = [d['valid']['loss'] for d in history]\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(3.5,3))\n",
+    "ax.plot(steps, loss_train, label='Train', color=process.colors['Train'])\n",
+    "ax.plot(steps, loss_valid, label='Valid.', color=process.colors['Valid.'])\n",
+    "\n",
+    "ax.set_xlabel('Iterations')\n",
+    "ax.set_ylabel('Loss')\n",
+    "ax.legend(frameon=False)\n",
+    "#ax.set_yscale('log')\n",
+    "#fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss.svg', bbox_inches='tight')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1c1df5d0",
+   "metadata": {},
+   "source": [
+    "## Evaluate model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "90879c91",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.9.16"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
