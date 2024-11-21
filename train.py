@@ -28,9 +28,11 @@ if not os.path.exists('images/'):
 if not os.path.exists('models/'):
     os.makedirs('models/')
 
+#Stating the element of focus
+element = 'Cr'
 
 # Load data
-data_file1 = 'Ti_XANES.json'
+data_file1 = element + '_XANES.json'
 xanes = XANES()
 xanes.load_data(data_file1)
 xanes.data
@@ -346,7 +348,7 @@ ax.plot(steps, loss_valid, label='Valid.', color=process.colors['Valid.'])
 ax.set_xlabel('Iterations')
 ax.set_ylabel('Loss')
 ax.set_ylim(0,.1)
-ax.set_title('Ti_XANES')
+ax.set_title(element + '_XANES')
 ax.legend(frameon=False)
 #ax.set_yscale('log')
 fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss.svg', bbox_inches='tight')
@@ -394,11 +396,11 @@ print("Quartile 3 is", np.percentile(error,75))
 print(("The mean is"), np.mean(error))
 
 plt.hist(error,50,(0,np.percentile(error,99)))
-plt.title("Model Error Histogram for Ti")
+plt.title('Model Error Histogram for' + element)
 plt.ylabel('Count')
 plt.xlabel('Error')
-plt.savefig(plt.savefig('images/Ti_Error.png', dpi=300))
+plt.savefig('images/' + element + '_Error.png', dpi=300)
 print("Average MSE of", np.mean(error))
 print("Median MSE of", np.median(error))
 
-print(708)
+print(1111)
