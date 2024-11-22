@@ -29,10 +29,10 @@ if not os.path.exists('models/'):
     os.makedirs('models/')
 
 #Stating the element of focus
-element = 'Cr'
+element = 'Cu'
 
 # Load data
-data_file1 = element + '_XANES.json'
+data_file1 = 'data/' + element + '_XANES.json'
 xanes = XANES()
 xanes.load_data(data_file1)
 xanes.data
@@ -326,7 +326,7 @@ else:
     s0 = 0
 
 # fit E3NN
-for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=60, device=device,
+for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=100, device=device,
                        scheduler=scheduler):
     with open(model_path, 'wb') as f:
         torch.save(results, f)
@@ -350,8 +350,8 @@ ax.set_ylabel('Loss')
 ax.set_ylim(0,.1)
 ax.set_title(element + '_XANES')
 ax.legend(frameon=False)
-#ax.set_yscale('log')
-fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss.svg', bbox_inches='tight')
+ax.set_yscale('log')
+fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss' + element + '.svg', bbox_inches='tight')
 
 #Comparing some
 test_y_true = np.zeros((batch_size*len(dataloader_test),100))
@@ -390,6 +390,7 @@ for i in range(len(test_y_pred)):
   #if np.mean((test_y_pred[i]-test_y_true[i])**2) == 7.898989:
     #plt.plot(x_new,test_y_pred[i])
     #plt.plot(x_new,test_y_true[i])
+print('the element is ' + element)
 print("Quartile 1 is", np.percentile(error,25))
 print("The median is", np.median(error))
 print("Quartile 3 is", np.percentile(error,75))
@@ -403,4 +404,3 @@ plt.savefig('images/' + element + '_Error.png', dpi=300)
 print("Average MSE of", np.mean(error))
 print("Median MSE of", np.median(error))
 
-print(1111)
