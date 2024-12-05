@@ -94,6 +94,23 @@ for i in xanes.data.index:
   xanes.data['spectrum'][i]['y'] = y_new
 xanes.data
 
+#Slicing out the test data manually
+test_size = .2
+Need_removed = test_size*len(xanes.data)
+placement = 1
+test_set_y = []
+test_set_formula = []
+for i in range(int(Need_removed)):
+  test_set_y += [xanes.data['spectrum'][placement]['y']]
+  test_set_formula += [xanes.data['formula_pretty'][placement]]
+  xanes.data = xanes.data.drop(index = placement)
+  placement += i
+  placement = placement%len(xanes.data)
+  xanes.data.index = np.arange(0,len(xanes.data))
+
+print("the test set has length", len(test_set_y))
+
+
 # Enforce a minimum number of examples of each specie
 species_min = 0
 xanes.get_species_counts()
@@ -128,7 +145,7 @@ xanes.data['input'] = xanes.data.progress_apply(lambda x: process.build_data(x, 
 
 # Train/valid/test split
 test_size = 0.2
-fig = process.train_valid_test_split(xanes.data, valid_size=test_size, test_size=test_size, plot=False)
+fig = process.train_valid_test_split(xanes.data, valid_size=0.2, test_size=0.001, plot=False)
 
 # Calculate average number of neighbors
 process.get_neighbors(xanes.data)
@@ -302,7 +319,7 @@ opt = torch.optim.Adam(enn.parameters(), lr=1e-3)
 scheduler = None #torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.99)
 
 model_num = 0
-model_path = 'models/' + enn.model_name + '_' + str(model_num) + '.torch'
+model_path = 'models/' + enn.model_name + '_' + str(model_num) + element + '.torch'
 
 print(model_path)
 #print(enn)
@@ -380,27 +397,27 @@ for i in range(len(test_y_pred)):
   test_y_pred[i] = np.delete(temp,0)
 
 #Getting the cosine similarity
-print('The Cosine similarity is')
-print(np.sum(test_y_pred*test_y_true)/((np.sum(test_y_pred**2))**(1/2)*(np.sum(test_y_true**2))**(1/2)))
+#print('The Cosine similarity is')
+#print(np.sum(test_y_pred*test_y_true)/((np.sum(test_y_pred**2))**(1/2)*(np.sum(test_y_true**2))**(1/2)))
 
 #Find the average error:
-error = np.zeros(len(test_y_pred))
-for i in range(len(test_y_pred)):
-  error[i] = np.mean((test_y_pred[i]-test_y_true[i])**2)
+#error = np.zeros(len(test_y_pred))
+#for i in range(len(test_y_pred)):
+  #error[i] = np.mean((test_y_pred[i]-test_y_true[i])**2)
   #if np.mean((test_y_pred[i]-test_y_true[i])**2) == 7.898989:
     #plt.plot(x_new,test_y_pred[i])
     #plt.plot(x_new,test_y_true[i])
-print('the element is ' + element)
-print("Quartile 1 is", np.percentile(error,25))
-print("The median is", np.median(error))
-print("Quartile 3 is", np.percentile(error,75))
-print(("The mean is"), np.mean(error))
+#print('the element is ' + element)
+#print("Quartile 1 is", np.percentile(error,25))
+#print("The median is", np.median(error))
+#print("Quartile 3 is", np.percentile(error,75))
+#print(("The mean is"), np.mean(error))
 
-plt.hist(error,50,(0,np.percentile(error,99)))
-plt.title('Model Error Histogram for' + element)
-plt.ylabel('Count')
-plt.xlabel('Error')
-plt.savefig('images/' + element + '_Error.png', dpi=300)
-print("Average MSE of", np.mean(error))
-print("Median MSE of", np.median(error))
+#plt.hist(error,50,(0,np.percentile(error,99)))
+#plt.title('Model Error Histogram for' + element)
+#plt.ylabel('Count')
+#plt.xlabel('Error')
+#plt.savefig('images/' + element + '_Error.png', dpi=300)
+#print("Average MSE of", np.mean(error))
+#print("Median MSE of", np.median(error))
 
