@@ -55,6 +55,33 @@ for i in xanes.data.index:
 xanes.data.index = np.arange(0,len(xanes.data))
 print(len(outliers_y))
 
+#Removing outlier elements from our dataset
+#Only those with less than 20 examples each
+#We run through the data multiple time though because sometimes removing data can
+#move an element to the outlier range so we must go through it again
+elements = ('H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si','P','S','Cl','Ar','K','Ca','Sc','Ti',
+              'V','Cr','Mn','Fe','Co','Ni','Cu','Zn','Ga','Ge','As','Se','Br','Kr','Rb','Sr','Y','Zr','Nb','Mo','Tc','Ru',
+              'Rh','Pd','Ag','Cd','In','Sn','Sb','Te','I','Xe','Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb',
+              'Dy','Ho','Er','Tm','Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg','Tl','Pb','Bi','Po','At','Rn',
+              'Fr','Ra','Ac','Th','Pa','U','Np','Pu','Am','Cm','Bk','Cf','Es','Fm')
+outliers_e = []
+removed_elements = []
+for t in range(3):
+  for e in elements:
+    elemental_counter = 0
+    for i in xanes.data.index:
+      if e in xanes.data['formula_pretty'][i]:
+        elemental_counter += 1
+    if elemental_counter < 20:
+      removed_elements += [e]
+      for i in xanes.data.index:
+        if e in xanes.data['formula_pretty'][i]:
+          outliers_e += [xanes.data['formula_pretty'][i]]
+          xanes.data = xanes.data.drop(index = i)
+xanes.data.index = np.arange(0,len(xanes.data))
+print("The number of elemental outliers is", len(outliers_e))
+print("The list of removed elements is", removed_elements)
+
 #Analyze the max and the mins of the data as well as the density
 minisy = np.zeros(len(xanes.data))
 maxisy = np.zeros(len(xanes.data))
