@@ -37,7 +37,7 @@ xanes = XANES()
 xanes.load_data(data_file1)
 xanes.data
 
-#Removing Course data
+#Removing XFAS data
 outliers_den = []
 for i in xanes.data.index:
   if (max(xanes.data['spectrum'][i]['x']) - min(xanes.data['spectrum'][i]['x']))/len(xanes.data['spectrum'][i]['x']) > 1:
@@ -58,29 +58,34 @@ print(len(outliers_y))
 #Removing outlier elements from our dataset
 #Only those with less than 20 examples each
 #We run through the data multiple time though because sometimes removing data can
-#move an element to the outlier range so we must go through it again
+#move an element to the outlier range so we must go through it multiple times
+#This does basically the same things as setting a species_min but this way we get a list of everything removed
+#and every element not included
 elements = ('H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si','P','S','Cl','Ar','K','Ca','Sc','Ti',
               'V','Cr','Mn','Fe','Co','Ni','Cu','Zn','Ga','Ge','As','Se','Br','Kr','Rb','Sr','Y','Zr','Nb','Mo','Tc','Ru',
               'Rh','Pd','Ag','Cd','In','Sn','Sb','Te','I','Xe','Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb',
               'Dy','Ho','Er','Tm','Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg','Tl','Pb','Bi','Po','At','Rn',
               'Fr','Ra','Ac','Th','Pa','U','Np','Pu','Am','Cm','Bk','Cf','Es','Fm')
+
 outliers_e = []
 removed_elements = []
-for t in range(3):
+min_elements = 20
+for t in range(5):
   for e in elements:
     elemental_counter = 0
     for i in xanes.data.index:
       if e in xanes.data['formula_pretty'][i]:
         elemental_counter += 1
-    if elemental_counter < 20:
-      removed_elements += [e]
+    if elemental_counter < min_elements:
+      if t == 4: 
+        removed_elements += [e]
       for i in xanes.data.index:
         if e in xanes.data['formula_pretty'][i]:
           outliers_e += [xanes.data['formula_pretty'][i]]
           xanes.data = xanes.data.drop(index = i)
 xanes.data.index = np.arange(0,len(xanes.data))
 print("The number of elemental outliers is", len(outliers_e))
-print("The list of removed elements is", removed_elements)
+print("The list of non-included elements is", removed_elements)
 
 #Analyze the max and the mins of the data as well as the density
 minisy = np.zeros(len(xanes.data))
@@ -121,23 +126,6 @@ for i in xanes.data.index:
   xanes.data['spectrum'][i]['y'] = y_new
 xanes.data
 
-#Slicing out the test data manually
-test_size = .2
-Need_removed = test_size*len(xanes.data)
-placement = 1
-test_set_y = []
-test_set_formula = []
-for i in range(int(Need_removed)):
-  test_set_y += [xanes.data['spectrum'][placement]['y']]
-  test_set_formula += [xanes.data['formula_pretty'][placement]]
-  xanes.data = xanes.data.drop(index = placement)
-  placement += i
-  placement = placement%len(xanes.data)
-  xanes.data.index = np.arange(0,len(xanes.data))
-
-print("the test set has length", len(test_set_y))
-
-
 # Enforce a minimum number of examples of each specie
 species_min = 0
 xanes.get_species_counts()
@@ -170,9 +158,44 @@ r_max = 5.     # cutoff radius
 tqdm.pandas(desc='Building data', bar_format=bar_format)
 xanes.data['input'] = xanes.data.progress_apply(lambda x: process.build_data(x, r_max), axis=1)
 
-# Train/valid/test split
-test_size = 0.2
-fig = process.train_valid_test_split(xanes.data, valid_size=0.2, test_size=0.001, plot=False)
+#Creating a constant test set with random train and val sets
+test_size = .2
+backup_seed = np.random.randint(10000) + 50
+np.random.seed(42)
+num_list = np.linspace(0,len(xanes.data)-1,len(xanes.data))
+np.random.shuffle(num_list)
+
+train_val_index = []
+test_index = []
+val_index = []
+train_index= []
+for i in range(len(xanes.data)):
+  if i/len(xanes.data) < test_size:
+    test_index += [int(num_list[i])]
+  else: 
+    train_val_index += [int(num_list[i])]
+
+np.random.seed(backup_seed)
+np.random.shuffle(train_val_index)
+
+for i in range(len(train_val_index)):
+  if i/len(train_val_index) < test_size:
+    val_index += [train_val_index[i]]
+  else: 
+    train_index += [train_val_index[i]]
+
+print("The training size is", len(train_index))
+print("The validation size is", len(val_index))
+print("The test size is", len(test_index))
+
+process.idx_train = train_index
+process.idx_valid = val_index
+process.idx_test = test_index
+
+# Alternative Train/valid/test split that ensures proportional distribution of elements
+#test_size = 0.2
+#fig = process.train_valid_test_split(xanes.data, valid_size=test_size, test_size=test_size, plot=True)
+#fig.savefig('images/train_valid_test_split.svg', bbox_inches='tight')
 
 # Calculate average number of neighbors
 process.get_neighbors(xanes.data)
@@ -370,7 +393,7 @@ else:
     s0 = 0
 
 # fit E3NN
-for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=100, device=device,
+for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=125, device=device,
                        scheduler=scheduler):
     with open(model_path, 'wb') as f:
         torch.save(results, f)
@@ -396,6 +419,12 @@ ax.set_title(element + '_XANES')
 ax.legend(frameon=False)
 ax.set_yscale('log')
 fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss' + element + '.svg', bbox_inches='tight')
+
+#peeking into the train and val loss curves
+peeking_size = 25
+print("The training and val loss look like:")
+for i in range(peeking_size):
+  print(loss_train[int(i*len(loss_train)/peeking_size)],loss_valid[int(i*len(loss_train)/peeking_size)])
 
 #Comparing some
 test_y_true = np.zeros((batch_size*len(dataloader_test),100))
