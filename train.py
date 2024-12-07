@@ -154,7 +154,8 @@ mass_onehot = torch.diag(torch.tensor(mass_specie))
 # Process data into input descriptors
 process = Process(species, Z_max, type_encoding, type_onehot, mass_onehot, default_dtype)
 
-r_max = 5.     # cutoff radius
+r_max = 4.     # cutoff radius
+print("you have a max radius of", r_max)
 tqdm.pandas(desc='Building data', bar_format=bar_format)
 xanes.data['input'] = xanes.data.progress_apply(lambda x: process.build_data(x, r_max), axis=1)
 
@@ -162,27 +163,20 @@ xanes.data['input'] = xanes.data.progress_apply(lambda x: process.build_data(x, 
 test_size = .2
 backup_seed = np.random.randint(10000) + 50
 np.random.seed(42)
-num_list = np.linspace(0,len(xanes.data)-1,len(xanes.data))
+num_list = list(np.linspace(0,len(xanes.data)-1,len(xanes.data)))
 np.random.shuffle(num_list)
 
-train_val_index = []
-test_index = []
-val_index = []
-train_index= []
-for i in range(len(xanes.data)):
-  if i/len(xanes.data) < test_size:
-    test_index += [int(num_list[i])]
-  else: 
-    train_val_index += [int(num_list[i])]
+chunk = 1
+print("Your chunk number is", chunk)
 
-np.random.seed(backup_seed)
-np.random.shuffle(train_val_index)
+test_index = num_list[0:int(len(xanes.data)*test_size)]
+val_train_index = num_list[int(len(xanes.data)*test_size):]
+val_index = val_train_index[int(len(val_train_index)*test_size*(chunk-1)):int(len(val_train_index)*test_size*chunk)]
 
-for i in range(len(train_val_index)):
-  if i/len(train_val_index) < test_size:
-    val_index += [train_val_index[i]]
-  else: 
-    train_index += [train_val_index[i]]
+train_index = []
+for i in range(1,int(1/test_size)+1):
+  if i!=chunk:
+    train_index += val_train_index[int(len(val_train_index)*test_size*(i-1)):int(len(val_train_index)*test_size*i)]
 
 print("The training size is", len(train_index))
 print("The validation size is", len(val_index))
@@ -393,7 +387,7 @@ else:
     s0 = 0
 
 # fit E3NN
-for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=125, device=device,
+for results in enn.fit(opt, dataloader_train, dataloader_valid, history, s0, max_iter=300, device=device,
                        scheduler=scheduler):
     with open(model_path, 'wb') as f:
         torch.save(results, f)
@@ -421,10 +415,12 @@ ax.set_yscale('log')
 fig.savefig('images/' + enn.model_name + '_' + str(model_num) + '/loss' + element + '.svg', bbox_inches='tight')
 
 #peeking into the train and val loss curves
-peeking_size = 25
+peeking_size = 60
 print("The training and val loss look like:")
 for i in range(peeking_size):
   print(loss_train[int(i*len(loss_train)/peeking_size)],loss_valid[int(i*len(loss_train)/peeking_size)])
+print("The min of the training set was", min(loss_train))
+print("The min of the validation set was", min(loss_valid))
 
 #Comparing some
 test_y_true = np.zeros((batch_size*len(dataloader_test),100))
